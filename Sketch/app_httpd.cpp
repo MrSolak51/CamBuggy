@@ -49,12 +49,9 @@ httpd_handle_t camera_httpd = NULL;
 
 
 // user defines start
-
-#define GPIO_OUTPUT_PIN_12 12
-#define GPIO_OUTPUT_PIN_13 13
-#define GPIO_OUTPUT_PIN_14 14
-#define GPIO_OUTPUT_PIN_15 15
-
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
 #define GPIO_PWM_PIN_2  2
 #define GPIO_PWM_PIN_16  16
 
@@ -65,10 +62,10 @@ httpd_handle_t camera_httpd = NULL;
 void configure_gpio()
 {
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << GPIO_OUTPUT_PIN_12) |
-                        (1ULL << GPIO_OUTPUT_PIN_13) |
-                        (1ULL << GPIO_OUTPUT_PIN_14) |
-                        (1ULL << GPIO_OUTPUT_PIN_15),
+        .pin_bit_mask = (1ULL << GPIO_NUM_12) |
+                        (1ULL << GPIO_NUM_13) |
+                        (1ULL << GPIO_NUM_14) |
+                        (1ULL << GPIO_NUM_15),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -81,11 +78,13 @@ void configure_pwm_pins()
 {
     // 1. Timer yapılandır
     ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_0,
         .freq_hz = 5000,
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .timer_num = LEDC_TIMER_0
+        .clk_cfg = LEDC_AUTO_CLK
     };
+
     ledc_timer_config(&ledc_timer);
 
     // 2. Kanal/PIN eşlemesi (2 kanal kullanılacaksa sadece 2 eleman tanımlanmalı)
@@ -743,10 +742,10 @@ static esp_err_t index_handler(httpd_req_t *req) {
 
 //buggy controller start
 void move_forward(int speed){
-  gpio_set_level(GPIO_OUTPUT_PIN_12, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_13, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_14, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_15, 0);
+  gpio_set_level(GPIO_NUM_12, 1);
+  gpio_set_level(GPIO_NUM_13, 0);
+  gpio_set_level(GPIO_NUM_14, 1);
+  gpio_set_level(GPIO_NUM_15, 0);
   
   ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed); // 100% duty
   ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
@@ -755,10 +754,10 @@ void move_forward(int speed){
 }
 
 void move_backward(int speed){
-  gpio_set_level(GPIO_OUTPUT_PIN_12, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_13, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_14, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_15, 1);
+  gpio_set_level(GPIO_NUM_12, 0);
+  gpio_set_level(GPIO_NUM_13, 1);
+  gpio_set_level(GPIO_NUM_14, 0);
+  gpio_set_level(GPIO_NUM_15, 1);
   
   ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed); // 100% duty
   ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
@@ -767,10 +766,10 @@ void move_backward(int speed){
 }
 
 void move_right(int speed){
-  gpio_set_level(GPIO_OUTPUT_PIN_12, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_13, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_14, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_15, 1);
+  gpio_set_level(GPIO_NUM_12, 1);
+  gpio_set_level(GPIO_NUM_13, 0);
+  gpio_set_level(GPIO_NUM_14, 0);
+  gpio_set_level(GPIO_NUM_15, 1);
   
   ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed); // 100% duty
   ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
@@ -779,10 +778,10 @@ void move_right(int speed){
 }
 
 void move_left(int speed){
-  gpio_set_level(GPIO_OUTPUT_PIN_12, 0);
-  gpio_set_level(GPIO_OUTPUT_PIN_13, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_14, 1);
-  gpio_set_level(GPIO_OUTPUT_PIN_15, 0);
+  gpio_set_level(GPIO_NUM_12, 0);
+  gpio_set_level(GPIO_NUM_13, 1);
+  gpio_set_level(GPIO_NUM_14, 1);
+  gpio_set_level(GPIO_NUM_15, 0);
   
   ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed); // 100% duty
   ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
@@ -791,10 +790,10 @@ void move_left(int speed){
 }
 
 void stop(){
-    gpio_set_level(GPIO_OUTPUT_PIN_12, 0);
-    gpio_set_level(GPIO_OUTPUT_PIN_13, 0);
-    gpio_set_level(GPIO_OUTPUT_PIN_14, 0);
-    gpio_set_level(GPIO_OUTPUT_PIN_15, 0);
+    gpio_set_level(GPIO_NUM_12, 0);
+    gpio_set_level(GPIO_NUM_13, 0);
+    gpio_set_level(GPIO_NUM_14, 0);
+    gpio_set_level(GPIO_NUM_15, 0);
 
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 0); // 100% duty
     ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
@@ -886,34 +885,6 @@ esp_err_t move_right_handler(httpd_req_t *req)
     httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
-
-esp_err_t move_left_handler(httpd_req_t *req)
-{
-    char buf[100];
-    int ret, remaining = req->content_len;
-
-    while (remaining > 0) {
-        if ((ret = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            return ESP_FAIL;
-        }
-        remaining -= ret;
-    }
-
-    buf[req->content_len] = '\0';
-    ESP_LOGI("Left", "Received body: %s", buf);
-
-    int speed = 0;
-    sscanf(buf, "{\"speed\":%d}", &speed); // basit parse
-    ESP_LOGI("Left", "Speed = %d", speed);
-
-    move_left(speed);
-
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
 
 esp_err_t move_left_handler(httpd_req_t *req)
 {
