@@ -21,9 +21,28 @@
 #include "camera_index.h"
 #include "board_config.h"
 
+#include "Arduino.h"
+
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
 #endif
+
+// user defines start
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#define GPIO_PWM_PIN_2  2
+#define GPIO_PWM_PIN_16  16
+
+#define PWM_FREQ        500
+#define PWM_RESOLUTION  8
+// user defines end
+
+// user variables start
+
+static bool flash_state = false;
+
+// user variables end
 
 // LED FLASH setup
 #if defined(LED_GPIO_NUM)
@@ -46,78 +65,6 @@ static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
-
-
-// user defines start
-#ifndef MIN
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#define GPIO_PWM_PIN_2  2
-#define GPIO_PWM_PIN_16  16
-
-// user defines end
-
-// user functions start
-
-void configure_gpio()
-{
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_12) |
-                        (1ULL << GPIO_NUM_13) |
-                        (1ULL << GPIO_NUM_14) |
-                        (1ULL << GPIO_NUM_15),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-    gpio_config(&io_conf);
-}
-
-void configure_pwm_pins()
-{
-    // 1. Timer yapılandır
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_8_BIT,
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 5000,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&ledc_timer);
-
-    // 2. Kanal/PIN eşlemesi - DÜZELTİLMİŞ SIRALAMA
-    ledc_channel_config_t channels[2] = {
-        {
-            .gpio_num = GPIO_PWM_PIN_2,    // ENA
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .channel = LEDC_CHANNEL_0,
-            .timer_sel = LEDC_TIMER_0,
-            .duty = 0,
-            .hpoint = 0
-        },
-        {
-            .gpio_num = GPIO_PWM_PIN_16,   // ENB
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .channel = LEDC_CHANNEL_1,
-            .timer_sel = LEDC_TIMER_0,
-            .duty = 0,
-            .hpoint = 0
-        }
-    };
-
-    for (int i = 0; i < 2; i++) {
-        ledc_channel_config(&channels[i]);
-    }
-}
-
-// user functions end
-
-// user variables start
-
-static bool flash_state = false;
-
-// user variables end
 
 typedef struct {
   size_t size;   //number of values used for filtering
@@ -166,9 +113,23 @@ void enable_led(bool en) {  // Turn LED On or Off
     duty = CONFIG_LED_MAX_INTENSITY;
   }
   ledcWrite(LED_GPIO_NUM, duty);
+  //ledc_set_duty(CONFIG_LED_LEDC_SPEED_MODE, CONFIG_LED_LEDC_CHANNEL, duty);
+  //ledc_update_duty(CONFIG_LED_LEDC_SPEED_MODE, CONFIG_LED_LEDC_CHANNEL);
   log_i("Set LED intensity to %d", duty);
 }
 #endif
+
+
+// PWM fonksiyonlarını düzgün şekilde tanımla
+void setup_pwm() {
+  ledcAttach(GPIO_PWM_PIN_2, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(GPIO_PWM_PIN_16, PWM_FREQ, PWM_RESOLUTION);
+  
+  // Başlangıçta PWM'leri sıfırla
+  ledcWrite(GPIO_PWM_PIN_2, 0);
+  ledcWrite(GPIO_PWM_PIN_16, 0);
+  
+}
 
 static esp_err_t bmp_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
@@ -178,7 +139,7 @@ static esp_err_t bmp_handler(httpd_req_t *req) {
 #endif
   fb = esp_camera_fb_get();
   if (!fb) {
-    log_e("Camera capture failed");
+    Serial.println("Camera capture failed");
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
@@ -196,7 +157,7 @@ static esp_err_t bmp_handler(httpd_req_t *req) {
   bool converted = frame2bmp(fb, &buf, &buf_len);
   esp_camera_fb_return(fb);
   if (!converted) {
-    log_e("BMP Conversion failed");
+    Serial.println("BMP Conversion failed");
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
@@ -230,15 +191,15 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 
 #if defined(LED_GPIO_NUM)
   enable_led(true);
-  vTaskDelay(150 / portTICK_PERIOD_MS);
-  fb = esp_camera_fb_get();
+  vTaskDelay(150 / portTICK_PERIOD_MS);  // The LED needs to be turned on ~150ms before the call to esp_camera_fb_get()
+  fb = esp_camera_fb_get();              // or it won't be visible in the frame. A better way to do this is needed.
   enable_led(false);
 #else
   fb = esp_camera_fb_get();
 #endif
 
   if (!fb) {
-    log_e("Camera capture failed");
+    Serial.println("Camera capture failed");
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
@@ -304,7 +265,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
   while (true) {
     fb = esp_camera_fb_get();
     if (!fb) {
-      log_e("Camera capture failed");
+      Serial.println("Camera capture failed");
       res = ESP_FAIL;
     } else {
       _timestamp.tv_sec = fb->timestamp.tv_sec;
@@ -314,7 +275,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
         esp_camera_fb_return(fb);
         fb = NULL;
         if (!jpeg_converted) {
-          log_e("JPEG compression failed");
+          Serial.println("JPEG compression failed");
           res = ESP_FAIL;
         }
       } else {
@@ -341,7 +302,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
       _jpg_buf = NULL;
     }
     if (res != ESP_OK) {
-      log_e("Send frame failed");
+      Serial.println("Send frame failed");
       break;
     }
     int64_t fr_end = esp_timer_get_time();
@@ -353,7 +314,10 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
     uint32_t avg_frame_time = ra_filter_run(&ra_filter, frame_time);
 #endif
-    log_i("MJPG: %uB %ums (%.1ffps), AVG: %ums (%.1ffps)", (uint32_t)(_jpg_buf_len), (uint32_t)frame_time, 1000.0 / (uint32_t)frame_time, avg_frame_time, 1000.0 / avg_frame_time);
+    log_i(
+      "MJPG: %uB %ums (%.1ffps), AVG: %ums (%.1ffps)", (uint32_t)(_jpg_buf_len), (uint32_t)frame_time, 1000.0 / (uint32_t)frame_time, avg_frame_time,
+      1000.0 / avg_frame_time
+    );
   }
 
 #if defined(LED_GPIO_NUM)
@@ -490,14 +454,14 @@ static esp_err_t status_handler(httpd_req_t *req) {
 
   if (s->id.PID == OV5640_PID || s->id.PID == OV3660_PID) {
     for (int reg = 0x3400; reg < 0x3406; reg += 2) {
-      p += print_reg(p, s, reg, 0xFFF);
+      p += print_reg(p, s, reg, 0xFFF);  //12 bit
     }
     p += print_reg(p, s, 0x3406, 0xFF);
 
-    p += print_reg(p, s, 0x3500, 0xFFFF0);
+    p += print_reg(p, s, 0x3500, 0xFFFF0);  //16 bit
     p += print_reg(p, s, 0x3503, 0xFF);
-    p += print_reg(p, s, 0x350a, 0x3FF);
-    p += print_reg(p, s, 0x350c, 0xFFFF);
+    p += print_reg(p, s, 0x350a, 0x3FF);   //10 bit
+    p += print_reg(p, s, 0x350c, 0xFFFF);  //16 bit
 
     for (int reg = 0x5480; reg <= 0x5490; reg++) {
       p += print_reg(p, s, reg, 0xFF);
@@ -510,7 +474,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     for (int reg = 0x5580; reg < 0x558a; reg++) {
       p += print_reg(p, s, reg, 0xFF);
     }
-    p += print_reg(p, s, 0x558a, 0x1FF);
+    p += print_reg(p, s, 0x558a, 0x1FF);  //9 bit
   } else if (s->id.PID == OV2640_PID) {
     p += print_reg(p, s, 0xd3, 0xFF);
     p += print_reg(p, s, 0x111, 0xFF);
@@ -695,16 +659,19 @@ static esp_err_t win_handler(httpd_req_t *req) {
   int offsetX = parse_get_var(buf, "offx", 0);
   int offsetY = parse_get_var(buf, "offy", 0);
   int totalX = parse_get_var(buf, "tx", 0);
-  int totalY = parse_get_var(buf, "ty", 0);
+  int totalY = parse_get_var(buf, "ty", 0);  // codespell:ignore totaly
   int outputX = parse_get_var(buf, "ox", 0);
   int outputY = parse_get_var(buf, "oy", 0);
   bool scale = parse_get_var(buf, "scale", 0) == 1;
   bool binning = parse_get_var(buf, "binning", 0) == 1;
   free(buf);
 
-  log_i("Set Window: Start: %d %d, End: %d %d, Offset: %d %d, Total: %d %d, Output: %d %d, Scale: %u, Binning: %u", startX, startY, endX, endY, offsetX, offsetY, totalX, totalY, outputX, outputY, scale, binning);
+  log_i(
+    "Set Window: Start: %d %d, End: %d %d, Offset: %d %d, Total: %d %d, Output: %d %d, Scale: %u, Binning: %u", startX, startY, endX, endY, offsetX, offsetY,
+    totalX, totalY, outputX, outputY, scale, binning  // codespell:ignore totaly
+  );
   sensor_t *s = esp_camera_sensor_get();
-  int res = s->set_res_raw(s, startX, startY, endX, endY, offsetX, offsetY, totalX, totalY, outputX, outputY, scale, binning);
+  int res = s->set_res_raw(s, startX, startY, endX, endY, offsetX, offsetY, totalX, totalY, outputX, outputY, scale, binning);  // codespell:ignore totaly
   if (res) {
     return httpd_resp_send_500(req);
   }
@@ -726,58 +693,35 @@ static esp_err_t index_handler(httpd_req_t *req) {
       return httpd_resp_send(req, (const char *)index_ov2640_html_gz, index_ov2640_html_gz_len);
     }
   } else {
-    log_e("Camera sensor not found");
+    Serial.println("Camera sensor not found");
     return httpd_resp_send_500(req);
   }
 }
 
 //buggy controller start
-void move_forward(int speed){
-  gpio_set_level(GPIO_NUM_12, 1);
-  gpio_set_level(GPIO_NUM_13, 0);
-  gpio_set_level(GPIO_NUM_14, 1);
-  gpio_set_level(GPIO_NUM_15, 0);
-  
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
-}
+void move(int right_speed, int left_speed){
+  if(right_speed < 0){
+    gpio_set_level(GPIO_NUM_12, 1);
+    gpio_set_level(GPIO_NUM_13, 0);
+    right_speed *=-1;
+  }
+  else{
+    gpio_set_level(GPIO_NUM_12, 0);
+    gpio_set_level(GPIO_NUM_13, 1);
+  }
+  if(left_speed < 0){
+    gpio_set_level(GPIO_NUM_14, 0);
+    gpio_set_level(GPIO_NUM_15, 1);
+    left_speed *=-1;
+  }
+  else{
+    gpio_set_level(GPIO_NUM_14, 1);
+    gpio_set_level(GPIO_NUM_15, 0);
+  }
 
-void move_backward(int speed){
-  gpio_set_level(GPIO_NUM_12, 0);
-  gpio_set_level(GPIO_NUM_13, 1);
-  gpio_set_level(GPIO_NUM_14, 0);
-  gpio_set_level(GPIO_NUM_15, 1);
   
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
-}
-
-void move_right(int speed){
-  gpio_set_level(GPIO_NUM_12, 1);
-  gpio_set_level(GPIO_NUM_13, 0);
-  gpio_set_level(GPIO_NUM_14, 0);
-  gpio_set_level(GPIO_NUM_15, 1);
-  
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
-}
-
-void move_left(int speed){
-  gpio_set_level(GPIO_NUM_12, 0);
-  gpio_set_level(GPIO_NUM_13, 1);
-  gpio_set_level(GPIO_NUM_14, 1);
-  gpio_set_level(GPIO_NUM_15, 0);
-  
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-  ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, speed);
-  ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
+  ledcWrite(GPIO_PWM_PIN_2, right_speed);
+  ledcWrite(GPIO_PWM_PIN_16, left_speed);
 }
 
 void stop(){
@@ -786,121 +730,51 @@ void stop(){
     gpio_set_level(GPIO_NUM_14, 0);
     gpio_set_level(GPIO_NUM_15, 0);
 
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 0);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 0);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
+  ledcWrite(GPIO_PWM_PIN_2, 0);
+  ledcWrite(GPIO_PWM_PIN_16, 0);
 }
 //buggy controller end
-
-//buggy control handler start
-esp_err_t move_forward_handler(httpd_req_t *req)
+// buggy control handler start
+esp_err_t move_handler(httpd_req_t *req)
 {
-    char buf[100];
-    int ret, remaining = req->content_len;
+    char *buf = NULL;
 
-    while (remaining > 0) {
-        if ((ret = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            return ESP_FAIL;
-        }
-        remaining -= ret;
+    // Query string'i al
+    if (parse_get(req, &buf) != ESP_OK || buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No query string");
+        return ESP_FAIL;
     }
 
-    buf[req->content_len] = '\0';
-    ESP_LOGI("Forward", "Received body: %s", buf);
+    char right_str[16];
+    char left_str[16];
 
-    int speed = 0;
-    sscanf(buf, "{\"speed\":%d}", &speed);
-    ESP_LOGI("Forward", "Speed = %d", speed);
+    int right_speed = 100; // default
+    int left_speed  = 100; // default
 
-    move_forward(speed);
+    // right parametresi
+    if (httpd_query_key_value(buf, "right", right_str, sizeof(right_str)) == ESP_OK) {
+        right_speed = atoi(right_str);
+    }
 
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+    // left parametresi
+    if (httpd_query_key_value(buf, "left", left_str, sizeof(left_str)) == ESP_OK) {
+        left_speed = atoi(left_str);
+    }
+
+    free(buf);
+
+    ESP_LOGI("MOVE", "Right = %d | Left = %d", right_speed, left_speed);
+
+    // Motorları sür
+    move(right_speed, left_speed);
+
+    char resp[64];
+    snprintf(resp, sizeof(resp), "RIGHT=%d LEFT=%d", right_speed, left_speed);
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
     return ESP_OK;
 }
 
-esp_err_t move_backward_handler(httpd_req_t *req)
-{
-    char buf[100];
-    int ret, remaining = req->content_len;
-
-    while (remaining > 0) {
-        if ((ret = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            return ESP_FAIL;
-        }
-        remaining -= ret;
-    }
-
-    buf[req->content_len] = '\0';
-    ESP_LOGI("Backward", "Received body: %s", buf);
-
-    int speed = 0;
-    sscanf(buf, "{\"speed\":%d}", &speed);
-    ESP_LOGI("Backward", "Speed = %d", speed);
-
-    move_backward(speed);
-
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-esp_err_t move_right_handler(httpd_req_t *req)
-{
-    char buf[100];
-    int ret, remaining = req->content_len;
-
-    while (remaining > 0) {
-        if ((ret = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            return ESP_FAIL;
-        }
-        remaining -= ret;
-    }
-
-    buf[req->content_len] = '\0';
-    ESP_LOGI("Right", "Received body: %s", buf);
-
-    int speed = 0;
-    sscanf(buf, "{\"speed\":%d}", &speed);
-    ESP_LOGI("Right", "Speed = %d", speed);
-
-    move_right(speed);
-
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-esp_err_t move_left_handler(httpd_req_t *req)
-{
-    char buf[100];
-    int ret, remaining = req->content_len;
-
-    while (remaining > 0) {
-        if ((ret = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            return ESP_FAIL;
-        }
-        remaining -= ret;
-    }
-
-    buf[req->content_len] = '\0';
-    ESP_LOGI("Left", "Received body: %s", buf);
-
-    int speed = 0;
-    sscanf(buf, "{\"speed\":%d}", &speed);
-    ESP_LOGI("Left", "Speed = %d", speed);
-
-    move_left(speed);
-
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
 
 esp_err_t stop_handler(httpd_req_t *req)
 {
@@ -914,6 +788,8 @@ esp_err_t stop_handler(httpd_req_t *req)
 esp_err_t toggle_flash_handler(httpd_req_t *req)
 {
     flash_state = !flash_state;
+    led_duty = CONFIG_LED_MAX_INTENSITY;
+
     enable_led(flash_state);
     ESP_LOGI("TOGGLE", "Flash state: %s", flash_state ? "ON" : "OFF");
     const char *resp_str = flash_state ? "Flash ON" : "Flash OFF";
@@ -922,44 +798,43 @@ esp_err_t toggle_flash_handler(httpd_req_t *req)
 }
 //buggy control handler end
 
+
+void setup_motor_pins() {
+  // Motor kontrol pinlerini çıkış olarak ayarla
+  gpio_config_t io_conf;
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+  io_conf.mode = GPIO_MODE_OUTPUT;
+  io_conf.pin_bit_mask = (1ULL << GPIO_NUM_12) | (1ULL << GPIO_NUM_13) | 
+                         (1ULL << GPIO_NUM_14) | (1ULL << GPIO_NUM_15);
+  io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+  gpio_config(&io_conf);
+  
+  // Başlangıçta tüm motor pinlerini LOW yap
+  gpio_set_level(GPIO_NUM_12, 0);
+  gpio_set_level(GPIO_NUM_13, 0);
+  gpio_set_level(GPIO_NUM_14, 0);
+  gpio_set_level(GPIO_NUM_15, 0);
+  
+  log_i("Motor pins initialized: GPIO 12, 13, 14, 15");
+}
+
 void startCameraServer() {
+  // Önce motor pinlerini ve PWM'leri başlat
+  setup_motor_pins();
+  setup_pwm();
+  
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 14;
 
-  //buggy config start
-  configure_gpio();
-  configure_pwm_pins();
-  //buggy config end
 
-  // buggy control api start - DÜZELTİLMİŞ
-  httpd_uri_t move_forward_uri = {
-    .uri = "/api/forward",
-    .method = HTTP_POST,
-    .handler = move_forward_handler,
-    .user_ctx = NULL
+  // buggy control api start
+  httpd_uri_t move_uri = {
+      .uri = "/api/move",
+      .method = HTTP_GET,
+      .handler = move_handler,
+      .user_ctx = NULL
   };
-
-  httpd_uri_t move_backward_uri = {
-    .uri = "/api/backward",
-    .method = HTTP_POST,
-    .handler = move_backward_handler,
-    .user_ctx = NULL
-  };
-  
-  httpd_uri_t move_right_uri = {
-    .uri = "/api/right",
-    .method = HTTP_POST,
-    .handler = move_right_handler,
-    .user_ctx = NULL
-  };
-  
-  httpd_uri_t move_left_uri = {
-    .uri = "/api/left",
-    .method = HTTP_POST,
-    .handler = move_left_handler,
-    .user_ctx = NULL
-  };
-  
   httpd_uri_t stop_uri = {
     .uri = "/api/stop",
     .method = HTTP_GET,
@@ -974,12 +849,17 @@ void startCameraServer() {
     .user_ctx = NULL
   };
   // buggy control api end
-
   httpd_uri_t index_uri = {
     .uri = "/",
     .method = HTTP_GET,
     .handler = index_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t status_uri = {
@@ -987,6 +867,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = status_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t cmd_uri = {
@@ -994,6 +880,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = cmd_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t capture_uri = {
@@ -1001,6 +893,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = capture_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t stream_uri = {
@@ -1008,6 +906,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = stream_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t bmp_uri = {
@@ -1015,6 +919,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = bmp_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t xclk_uri = {
@@ -1022,6 +932,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = xclk_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t reg_uri = {
@@ -1029,6 +945,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = reg_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t greg_uri = {
@@ -1036,6 +958,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = greg_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t pll_uri = {
@@ -1043,6 +971,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = pll_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   httpd_uri_t win_uri = {
@@ -1050,6 +984,12 @@ void startCameraServer() {
     .method = HTTP_GET,
     .handler = win_handler,
     .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
   };
 
   ra_filter_init(&ra_filter, 20);
@@ -1068,11 +1008,11 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
 
+    httpd_register_uri_handler(camera_httpd, &stream_uri);
+
+    
     //buggy control register start
-    httpd_register_uri_handler(camera_httpd, &move_forward_uri);
-    httpd_register_uri_handler(camera_httpd, &move_backward_uri);
-    httpd_register_uri_handler(camera_httpd, &move_right_uri);
-    httpd_register_uri_handler(camera_httpd, &move_left_uri);
+    httpd_register_uri_handler(camera_httpd, &move_uri);
     httpd_register_uri_handler(camera_httpd, &stop_uri);
     httpd_register_uri_handler(camera_httpd, &toggle_flash_uri);
     //buggy control register end
@@ -1080,7 +1020,7 @@ void startCameraServer() {
 
   config.server_port += 1;
   config.ctrl_port += 1;
-  log_i("Starting stream server on port: '%d'", config.server_port);
+  Serial.printf("Starting stream server on port: '%d'", config.server_port);
   if (httpd_start(&stream_httpd, &config) == ESP_OK) {
     httpd_register_uri_handler(stream_httpd, &stream_uri);
   }
@@ -1090,6 +1030,6 @@ void setupLedFlash() {
 #if defined(LED_GPIO_NUM)
   ledcAttach(LED_GPIO_NUM, 5000, 8);
 #else
-  log_i("LED flash is disabled -> LED_GPIO_NUM undefined");
+  Serial.Println("LED flash is disabled -> LED_GPIO_NUM undefined");
 #endif
 }

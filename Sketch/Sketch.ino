@@ -9,8 +9,8 @@
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "CamBuggy";
-const char *password = "AhmetSerhatMetehan";
+const char *ap_ssid = "CamBuggy";
+const char *ap_password = "12345678";
 
 void startCameraServer();
 void setupLedFlash();
@@ -18,7 +18,21 @@ void setupLedFlash();
 void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
-  Serial.println();
+  delay(1000);
+  
+  Serial.println("\n\n=====================================");
+  Serial.println("🚀 Starting CamBuggy System");
+  Serial.println("=====================================");
+
+  // Bellek durumunu göster
+  Serial.printf("💾 Initial Free Heap: %d bytes\n", esp_get_free_heap_size());
+
+  // PSRAM kontrolü
+  if(psramFound()) {
+    Serial.println("✅ PSRAM Found - Using high resolution");
+  } else {
+    Serial.println("⚠️ No PSRAM - Using low memory mode");
+  }
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -39,33 +53,27 @@ void setup() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
-  config.pixel_format = PIXFORMAT_JPEG;  // for streaming
-  //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
+  config.xclk_freq_hz = 20000000; // Daha düşük frekans - daha kararlı
+  config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
   config.fb_count = 1;
 
-  // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
-  //                      for larger pre-allocated frame buffer.
+  // PSRAM kontrolü - BELLEĞİ OPTİMİZE ET
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
       config.jpeg_quality = 10;
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
+      config.frame_size = FRAMESIZE_VGA; // UXGA yerine VGA - daha az bellek
+      config.fb_location = CAMERA_FB_IN_PSRAM;
     } else {
-      // Limit the frame size when PSRAM is not available
-      config.frame_size = FRAMESIZE_SVGA;
+      // PSRAM yoksa çok düşük çözünürlük
+      config.frame_size = FRAMESIZE_CIF; // Çok düşük çözünürlük
       config.fb_location = CAMERA_FB_IN_DRAM;
+      config.fb_count = 1; // Sadece 1 frame buffer
+      config.jpeg_quality = 8; // Düşük kalite
     }
-  } else {
-    // Best option for face detection/recognition
-    config.frame_size = FRAMESIZE_240X240;
-#if CONFIG_IDF_TARGET_ESP32S3
-    config.fb_count = 2;
-#endif
   }
 
 #if defined(CAMERA_MODEL_ESP_EYE)
@@ -73,58 +81,77 @@ void setup() {
   pinMode(14, INPUT_PULLUP);
 #endif
 
-  // camera init
+  // Kamera başlatma
+  Serial.println("📷 Initializing camera...");
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
-  }
-
-  sensor_t *s = esp_camera_sensor_get();
-  // initial sensors are flipped vertically and colors are a bit saturated
-  if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);        // flip it back
-    s->set_brightness(s, 1);   // up the brightness just a bit
-    s->set_saturation(s, -2);  // lower the saturation
-  }
-  // drop down frame size for higher initial frame rate
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
-  }
+    Serial.printf("❌ Camera init failed with error 0x%x\n", err);
+    Serial.println("⚠️ Continuing without camera - buggy controls will work");
+  } else {
+    Serial.println("✅ Camera initialized successfully");
+    
+    sensor_t *s = esp_camera_sensor_get();
+    // Sensör ayarları
+    if (s->id.PID == OV3660_PID) {
+      s->set_vflip(s, 1);
+      s->set_brightness(s, 1);
+      s->set_saturation(s, -2);
+    }
+    
 
 #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
-  s->set_vflip(s, 1);
-  s->set_hmirror(s, 1);
+    s->set_vflip(s, 1);
+    s->set_hmirror(s, 1);
 #endif
 
 #if defined(CAMERA_MODEL_ESP32S3_EYE)
-  s->set_vflip(s, 1);
+    s->set_vflip(s, 1);
 #endif
+  }
 
-// Setup LED FLash if LED pin is defined in camera_pins.h
+// LED Flash
 #if defined(LED_GPIO_NUM)
   setupLedFlash();
+  Serial.println("💡 LED Flash initialized");
 #endif
-
-  WiFi.begin(ssid, password);
+  // ===========================
+  // WiFi - ACCESS POINT MODE
+  // ===========================
+  Serial.println("\n📡 Starting WiFi Access Point...");
+  
+  WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
 
-  Serial.print("WiFi connecting");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  bool result = WiFi.softAP(ap_ssid, ap_password);
+
+  if (!result) {
+    Serial.println("❌ Access Point oluşturulamadı!");
+    return;
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
 
-  startCameraServer();
+  Serial.println("✅ Access Point başarıyla oluşturuldu!");
+  Serial.print("📶 AP SSID: ");
+  Serial.println(ap_ssid);
+  Serial.print("🔐 AP Password: ");
+  Serial.println(ap_password);
+  Serial.print("🌐 AP IP Address: ");
+  Serial.println(WiFi.softAPIP());
+  Serial.print("🆔 AP MAC Address: ");
+  Serial.println(WiFi.softAPmacAddress());
 
-  Serial.print("Camera Ready! Use 'http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("' to connect");
+  Serial.printf("💾 Final Free Heap: %d bytes\n", esp_get_free_heap_size());
+  Serial.println("=====================================");
 }
 
 void loop() {
-  // Do nothing. Everything is done in another task by the web server
+  // Sistem durumunu göster
+  static unsigned long lastUpdate = 0;
+  if (millis() - lastUpdate > 15000) {
+    lastUpdate = millis();
+    
+    Serial.printf("📊 Status - Heap: %d bytes", esp_get_free_heap_size());
+    Serial.println();
+  }
+  
   delay(10000);
 }
