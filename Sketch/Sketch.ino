@@ -53,7 +53,7 @@ void setup() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000; // Daha düşük frekans - daha kararlı
+  config.xclk_freq_hz = 10000000; // Daha düşük frekans - daha kararlı
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.jpeg_quality = 12;
@@ -138,6 +138,10 @@ void setup() {
   Serial.println(WiFi.softAPIP());
   Serial.print("🆔 AP MAC Address: ");
   Serial.println(WiFi.softAPmacAddress());
+
+  // --- BU SATIRI EKLE ---
+  Serial.println("🌐 Starting Web Server...");
+  startCameraServer();
 
   Serial.printf("💾 Final Free Heap: %d bytes\n", esp_get_free_heap_size());
   Serial.println("=====================================");
