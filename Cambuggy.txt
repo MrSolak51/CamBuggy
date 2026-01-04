@@ -1,0 +1,35 @@
+Cambuggy
+-tekerlek modeli(elimizde var)
+-body modeli(elimizde var)
+-esp23-cam kutu modeli(elimizde var)
+-plenatary gearbox modeli(video linki koy)(elimizde var)
+	-sun gear(elimizde var)
+	-planet gears(elimizde var)
+	-ring gear(elimizde var)
+	-planet gear<->carrier connectors(elimizde yok)(yeniden tasarlanacak)
+	-carrier<->wheel connectors(elimizde var)
+-18650*2 lityum iyon pil(elimizde var)
+-l298n motor sürücü(elimizde var)
+-dc motor(elimizde var)
+-dip switch(elimizde var)
+-esp32-cam(elimizde var)
+
+-planetary dişlisi dc motor torku düşük kaldığı için güçü arttırmak amacıyla kullanılmıştır.
+-piller aynı zamanda ağırlık görevi gördüğü için denge problemi yaşanmamaktadır.
+
+api url'leri:
+	- /api/move?right=value&left=value
+	- /api/stop
+	- /api/flash
+-value negatif olursa geri gidecek. Başlangıç hareketi için value değerinien az 200 girmek gerekiyor.
+-turbo açıldığında value 254 olmalı.
+
+-uygulamada joystick mantığı kullanılırsa güzel olur.
+
+
+
+
+
+
+
+Not: Muhtemelen Kamera bozuldu. Nedeni bilinmiyor. Normalde çalışan kodlar çalışmıyor. Sensörü çalışıyor aman jpeg görüntüyü almıyor. Tekerler hareket ediyor. Video çekip gif haline getirip koyabiliriz ya da paraya kıyıp yeni esp cam alacağız.  
